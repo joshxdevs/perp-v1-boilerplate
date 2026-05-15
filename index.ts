@@ -237,7 +237,7 @@ app.delete("/order", (req, res) => {
         if (side[priceKey]) {
             side[priceKey].openOrders = side[priceKey].openOrders.filter(o => o.orderId !== orderId)
             side[priceKey].availableQty -= order.qty
-            if (side[priceKey].openOrders.length = 0) {
+            if (side[priceKey].openOrders.length === 0) {
                 delete side[priceKey]
             }
         }
@@ -264,20 +264,96 @@ app.get("/equity/available", (req, res) => {
         available: user.collateral.availabe
     })
 })
-app.get("/positions/open/:marketId", (req, res) => { });
-app.get("/positions/closed/:marketId", (req, res) => { });
-app.get("/orders/open/:marketId", (req, res) => { })
-app.get("/orders/:marketId", (req, res) => { })
-app.get("/fills", (req, res) => { });
+
+
+app.get("/positions/open/:marketId", (req, res) => {
+    const userId = Number(req.query.userId)
+    const { marketId } = req.params
+
+    const user = users.find(u => u.userId === userId)
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        })
+    }
+    const openPositions = user.positions.filter(o => o.market === marketId)
+    res.json(openPositions)
+})
+
+
+app.get("/positions/closed/:marketId", (req, res) => {
+    res.json([])
+})
+
+
+app.get("/orders/open/:marketId", (req, res) => {
+    const userId = Number(req.query.userId)
+    const { marketId } = req.params
+
+    const user = users.find(u => u.userId === userId)
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        })
+    }
+    const openOrders = user.orders.filter(o => o.market === marketId && o.status === "open")
+    res.json(openOrders)
+})
+
+
+app.get("/orders/:marketId", (req, res) => {
+    const userId = Number(req.query.userId)
+    const { marketId } = req.params
+
+    const user = users.find(u => u.userId === userId)
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        })
+    }
+
+    const marketOrders = user.orders.filter(o => o.market === marketId)
+    res.json(marketOrders)
+})
+
+
+app.get("/fills", (req, res) => {
+    const userId = req.query.userId ? Number(req.query.userId) : null
+
+    if (userId !== null) {
+        const userFills = fills.filter(f => f.maker === userId || f.taker === userId)
+        res.json(userFills)
+    } else {
+        res.json(fills)
+    }
+});
 
 async function liqudationChecks(asset: string, price: number) {
-
+    for (const user of users) {
+        const positionsToCheck = user.positions.filter(p => p.market === asset)
+        for (const position of positionsToCheck) {
+            let shouldLiquidate = false;
+            if (position.type === "LONG" && price <= position.liquidationPrice) {
+                shouldLiquidate = true;
+            }
+            if (position.type === "SHORT" && price >= position.liquidationPrice) {
+                shouldLiquidate = true;
+            }
+            if (shouldLiquidate) {
+                console.log(`LIQUIDATING: userId=${user.userId}, market=${asset}, type=${position.type}, at price=${price}`)
+                user.collateral.locked -= position.margin
+                user.positions = user.positions.filter(p => p !== position)
+            }
+        }
+    }
 }
 
 
 async function onPriceUpdateFromBinance(asset: string, price: number) {
     liqudationChecks(asset, price);
 }
+
+onPriceUpdateFromBinance("SOL", 79)
 
 app.listen(3000, () => {
     console.log("Server running on port 3000")
