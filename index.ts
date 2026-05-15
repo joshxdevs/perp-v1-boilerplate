@@ -353,8 +353,6 @@ async function onPriceUpdateFromBinance(asset: string, price: number) {
     liqudationChecks(asset, price);
 }
 
-onPriceUpdateFromBinance("SOL", 79)
-
 app.listen(3000, () => {
     console.log("Server running on port 3000")
 })
