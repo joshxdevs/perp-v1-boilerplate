@@ -170,34 +170,80 @@ app.post("/order", (req, res) => {
 
     const priceKey = String(price)
 
-    if (type === "LONG") {
-        if (!orderbooks[market].bids[priceKey]) {
-            orderbooks[market].bids[priceKey] = { availableQty: 0, openOrders: [] }
+    let remainingQty = qty;
+
+    const oppositeSide = type === "LONG" ? orderbooks[market].asks : orderbooks[market].bids
+    if (oppositeSide[priceKey]) {
+        const restingOrders = oppositeSide[priceKey].openOrders
+
+        for (let i = 0; i < restingOrders.length && remainingQty > 0; i++) {
+            const restingOrder = restingOrders[i]
+            const matchQty = Math.min(remainingQty, restingOrder!.qty - restingOrder!.filledQty)
+
+            if (matchQty > 0) {
+                fills.push({
+                    maker: restingOrder!.userId,
+                    taker: userId,
+                    market,
+                    qty: matchQty,
+                    price,
+                    long: type === "LONG" ? userId : restingOrder!.userId,
+                    short: type === "SHORT" ? userId : restingOrder!.userId
+                })
+                remainingQty -= matchQty
+                restingOrder!.filledQty += matchQty
+
+                if (restingOrder!.filledQty === restingOrder!.qty) {
+                    const makerUser = users.find(u => u.userId === restingOrder!.userId)
+                    if (makerUser) {
+                        const makerOrder = makerUser.orders.find(o => o.orderId === restingOrder!.orderId)
+                        if (makerOrder) {
+                            makerOrder.status = "filled"
+                        }
+                    }
+                }
+            }
         }
-        orderbooks[market].bids[priceKey].availableQty += qty;
-        orderbooks[market].bids[priceKey].openOrders.push({
-            userId,
-            qty,
-            filledQty: 0,
-            orderId: newOrderId,
-            createdAt: new Date()
-        })
-    } else {
-        if (!orderbooks[market].asks[priceKey]) {
-            orderbooks[market].asks[priceKey] = { availableQty: 0, openOrders: [] }
+        oppositeSide[priceKey].openOrders = restingOrders.filter(o => o.filledQty < o.qty)
+        oppositeSide[priceKey].availableQty -= (qty - remainingQty)
+        if (oppositeSide[priceKey].openOrders.length === 0) {
+            delete oppositeSide[priceKey]
         }
-        orderbooks[market].asks[priceKey].availableQty += qty;
-        orderbooks[market].asks[priceKey].openOrders.push({
-            userId,
-            qty,
-            filledQty: 0,
-            orderId: newOrderId,
-            createdAt: new Date()
-        })
+    }
+    if (remainingQty === 0) {
+        newOrder.status = "filled"
+    }
+
+    if (remainingQty > 0) {
+        if (type === "LONG") {
+            if (!orderbooks[market].bids[priceKey]) {
+                orderbooks[market].bids[priceKey] = { availableQty: 0, openOrders: [] }
+            }
+            orderbooks[market].bids[priceKey].availableQty += qty;
+            orderbooks[market].bids[priceKey].openOrders.push({
+                userId,
+                qty: remainingQty,
+                filledQty: 0,
+                orderId: newOrderId,
+                createdAt: new Date()
+            })
+        } else {
+            if (!orderbooks[market].asks[priceKey]) {
+                orderbooks[market].asks[priceKey] = { availableQty: 0, openOrders: [] }
+            }
+            orderbooks[market].asks[priceKey].availableQty += qty;
+            orderbooks[market].asks[priceKey].openOrders.push({
+                userId,
+                qty: remainingQty,
+                filledQty: 0,
+                orderId: newOrderId,
+                createdAt: new Date()
+            })
+        }
     }
     res.json({
         orderId: newOrderId,
-        status: "open"
+        status: newOrder.status
     })
 })
 
